@@ -91,10 +91,14 @@ body{
 .presetform input.pamt{width:90px;}
 .bulkbtn{margin-top:12px;width:100%;background:transparent;border:2px solid var(--accent);color:var(--accent);border-radius:12px;padding:9px;font-size:13px;font-weight:700;cursor:pointer;}
 .cardtitle{font-size:13px;color:var(--sub);margin-bottom:6px;font-weight:700;}
+.pin{letter-spacing:.3em;text-align:center;font-size:22px !important;}
+.lkmsg{min-height:18px;font-size:13px;color:#c0577a;margin-top:10px;text-align:center;}
+.lkbtns{display:flex;flex-direction:column;gap:10px;margin-top:14px;}
+.lkbtns .btn,.lkbtns .bulkbtn{width:100%;margin-top:0;}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="appWrap" style="display:none;">
 
   <div id="home">
     <div class="topbar">
@@ -133,7 +137,7 @@ body{
       </div>
       <div id="ioMsg" style="margin-top:8px;font-size:13px;color:#8b849c;"></div>
     </div>
-    <div style="text-align:center;color:#b8afcc;font-size:11px;margin-top:18px;">ver 11/24-a</div>
+    <div style="text-align:center;color:#b8afcc;font-size:11px;margin-top:18px;">ver 11/27-a</div>
   </div>
 
   <div id="detail">
@@ -190,8 +194,50 @@ body{
     <div class="card">
       <div id="entryList"></div>
     </div>
+
+    <div class="card" id="lockSettings">
+      <div class="cardtitle">ロック設定</div>
+      <div class="lkbtns" id="lsBtns">
+        <button class="bulkbtn" id="lsChangeBtn" onclick="lsOpen('change')">暗証番号を変更</button>
+        <button class="bulkbtn" id="lsBioBtn" onclick="lsOpen('bio')" style="display:none;"></button>
+      </div>
+      <div id="lsForm" style="display:none;">
+        <div class="field" style="margin-top:8px;"><label>現在の暗証番号</label><input type="password" id="lsCur" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+        <div id="lsNewWrap">
+          <div class="field"><label>新しい暗証番号(4〜6桁)</label><input type="password" id="lsNew1" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+          <div class="field"><label>新しい暗証番号(確認)</label><input type="password" id="lsNew2" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+        </div>
+        <div class="lkbtns">
+          <button class="btn" id="lsRunBtn" onclick="lsRun()">実行</button>
+          <button class="bulkbtn" onclick="lsClose()">キャンセル</button>
+        </div>
+      </div>
+      <div class="lkmsg" id="lsMsg"></div>
+    </div>
   </div>
 
+</div>
+
+<div class="wrap" id="lock" style="display:none;">
+  <div class="card" style="margin-top:60px;">
+    <div class="cardtitle" id="lkTitle" style="text-align:center;font-size:15px;">家計簿</div>
+    <div id="lkSetup" style="display:none;">
+      <div class="field"><label>暗証番号(4〜6桁の数字)</label><input type="password" id="lkP1" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+      <div class="field"><label>もう一度入力</label><input type="password" id="lkP2" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+      <div class="lkbtns">
+        <button class="btn" onclick="lkSetup(false)">暗証番号を設定して開始</button>
+        <button class="bulkbtn" id="lkSetBioBtn" onclick="lkSetup(true)" style="display:none;">Face ID を登録</button>
+      </div>
+    </div>
+    <div id="lkUnlock" style="display:none;">
+      <div class="field"><label>暗証番号</label><input type="password" id="lkPin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></div>
+      <div class="lkbtns">
+        <button class="btn" onclick="lkUnlock()">解錠</button>
+        <button class="bulkbtn" id="lkBioBtn" onclick="tryBio()" style="display:none;">Face ID で解錠</button>
+      </div>
+    </div>
+    <div class="lkmsg" id="lkMsg"></div>
+  </div>
 </div>
 
 <script>
@@ -667,7 +713,7 @@ document.getElementById("round5").addEventListener("change",ev=>{
 initMonth();
 renderHome();
 
-(function(){
+function runHash(){
   const h=location.hash||"";
   if(h.indexOf("#add=")!==0) return;
   showAppend();
@@ -677,7 +723,171 @@ renderHome();
     showMsg("追記データを読めませんでした: "+e.message);
   }
   try{ history.replaceState(null,"",location.pathname+location.search); }catch(e){}
-})();
+}
+
+/* ===== ロック ===== */
+const LOCK_KEY="kakeibo_lock";
+let locked=true, hiddenAt=0, lockBusy=false, bioOK=false, lsMode="";
+const lg=id=>document.getElementById(id);
+function lockLoad(){ try{ return JSON.parse(localStorage.getItem(LOCK_KEY)||"null"); }catch(e){ return null; } }
+function lockSave(c){ try{ localStorage.setItem(LOCK_KEY, JSON.stringify(c)); return localStorage.getItem(LOCK_KEY)!==null; }catch(e){ return false; } }
+function b64e(a){ let t=""; a.forEach(x=>t+=String.fromCharCode(x)); return btoa(t).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function b64d(t){ t=t.replace(/-/g,"+").replace(/_/g,"/"); while(t.length%4) t+="="; const r=atob(t); const a=new Uint8Array(r.length); for(let i=0;i<r.length;i++) a[i]=r.charCodeAt(i); return a; }
+async function pinHash(pin,salt){
+  const d=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(salt+":"+pin));
+  return b64e(new Uint8Array(d));
+}
+const PIN_RE=/^[0-9]{4,6}$/;
+async function bioCheck(){
+  bioOK=false;
+  try{
+    if(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create && navigator.credentials.get){
+      bioOK=PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable
+        ? await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable() : true;
+    }
+  }catch(e){ bioOK=false; }
+}
+async function bioRegister(){
+  const cred=await navigator.credentials.create({publicKey:{
+    challenge:crypto.getRandomValues(new Uint8Array(32)),
+    rp:{name:"家計簿"},
+    user:{id:crypto.getRandomValues(new Uint8Array(16)), name:"kakeibo", displayName:"家計簿"},
+    pubKeyCredParams:[{type:"public-key",alg:-7},{type:"public-key",alg:-257}],
+    authenticatorSelection:{authenticatorAttachment:"platform", userVerification:"required"},
+    timeout:60000, attestation:"none"
+  }});
+  return b64e(new Uint8Array(cred.rawId));
+}
+async function bioAuth(id){
+  const r=await navigator.credentials.get({publicKey:{
+    challenge:crypto.getRandomValues(new Uint8Array(32)),
+    allowCredentials:[{type:"public-key", id:b64d(id), transports:["internal"]}],
+    userVerification:"required", timeout:60000
+  }});
+  return !!r;
+}
+function lkMsg(t){ lg("lkMsg").textContent=t||""; }
+async function showLockScreen(){
+  locked=true;
+  lg("appWrap").style.display="none";
+  lg("lock").style.display="block";
+  ["lkP1","lkP2","lkPin"].forEach(i=>lg(i).value="");
+  lkMsg("");
+  try{
+    if(!(window.crypto && crypto.subtle)){ lg("lkSetup").style.display="none"; lg("lkUnlock").style.display="none"; lkMsg("この環境ではロックを利用できません(HTTPS で開いてください)"); return; }
+    await bioCheck();
+    const cfg=lockLoad();
+    if(!cfg || !cfg.hash){
+      lg("lkTitle").textContent="暗証番号を設定";
+      lg("lkSetup").style.display="block"; lg("lkUnlock").style.display="none";
+      lg("lkSetBioBtn").style.display=bioOK?"block":"none";
+      lg("lkP1").focus();
+    }else{
+      lg("lkTitle").textContent="ロック中";
+      lg("lkSetup").style.display="none"; lg("lkUnlock").style.display="block";
+      const useBio=!!(cfg.cred && bioOK);
+      lg("lkBioBtn").style.display=useBio?"block":"none";
+      if(useBio) tryBio(); else lg("lkPin").focus();
+    }
+  }catch(e){ lkMsg("ロック画面を表示できませんでした: "+e.message); }
+}
+function unlock(){
+  locked=false;
+  ["lkP1","lkP2","lkPin"].forEach(i=>lg(i).value="");
+  lg("lock").style.display="none";
+  lg("appWrap").style.display="";
+  lsClose(); lg("lsMsg").textContent="";
+  lsRefresh();
+  runHash();
+}
+async function tryBio(){
+  if(lockBusy) return;
+  const cfg=lockLoad();
+  if(!cfg || !cfg.cred) return;
+  lockBusy=true;
+  try{
+    if(await bioAuth(cfg.cred)){ lockBusy=false; unlock(); return; }
+  }catch(e){
+    lkMsg("Face ID で解錠できませんでした。暗証番号を入力してください");
+    lg("lkPin").focus();
+  }
+  lockBusy=false;
+}
+async function lkSetup(withBio){
+  const p1=lg("lkP1").value, p2=lg("lkP2").value;
+  if(!PIN_RE.test(p1)){ lkMsg("暗証番号は4〜6桁の数字で入力してください"); return; }
+  if(p1!==p2){ lkMsg("2回の入力が一致しません"); return; }
+  const salt=b64e(crypto.getRandomValues(new Uint8Array(16)));
+  const cfg={salt, hash:await pinHash(p1,salt)};
+  if(withBio){
+    try{ cfg.cred=await bioRegister(); }
+    catch(e){ lkMsg("Face ID を登録できませんでした。もう一度試すか、暗証番号のみで開始してください"); return; }
+  }
+  if(!lockSave(cfg)){ lkMsg("ロック設定を保存できませんでした"); return; }
+  unlock();
+}
+async function lkUnlock(){
+  const cfg=lockLoad();
+  const p=lg("lkPin").value;
+  if(!cfg || !PIN_RE.test(p)){ lkMsg("暗証番号は4〜6桁の数字で入力してください"); return; }
+  if(await pinHash(p,cfg.salt)===cfg.hash) unlock();
+  else { lkMsg("暗証番号が違います"); lg("lkPin").value=""; }
+}
+/* ロック設定(詳細画面の最下部) */
+function lsRefresh(){
+  const cfg=lockLoad()||{};
+  const b=lg("lsBioBtn");
+  if(cfg.cred){ b.textContent="Face ID の登録を解除"; b.style.display="block"; }
+  else if(bioOK){ b.textContent="Face ID を登録"; b.style.display="block"; }
+  else b.style.display="none";
+}
+function lsOpen(mode){
+  lsMode=mode==="bio" ? ((lockLoad()||{}).cred ? "unreg" : "reg") : "change";
+  ["lsCur","lsNew1","lsNew2"].forEach(i=>lg(i).value="");
+  lg("lsNewWrap").style.display=lsMode==="change"?"block":"none";
+  lg("lsRunBtn").textContent=lsMode==="change"?"変更する":(lsMode==="unreg"?"登録を解除する":"Face ID を登録する");
+  lg("lsBtns").style.display="none";
+  lg("lsForm").style.display="block";
+  lg("lsMsg").textContent="";
+  lg("lsCur").focus();
+}
+function lsClose(){
+  lg("lsForm").style.display="none";
+  lg("lsBtns").style.display="flex";
+  lsMode="";
+}
+async function lsRun(){
+  const msg=t=>lg("lsMsg").textContent=t;
+  const cfg=lockLoad();
+  if(!cfg){ msg("ロック設定が見つかりません"); return; }
+  const cur=lg("lsCur").value;
+  if(!PIN_RE.test(cur) || await pinHash(cur,cfg.salt)!==cfg.hash){ msg("現在の暗証番号が違います"); return; }
+  if(lsMode==="change"){
+    const n1=lg("lsNew1").value, n2=lg("lsNew2").value;
+    if(!PIN_RE.test(n1)){ msg("新しい暗証番号は4〜6桁の数字で入力してください"); return; }
+    if(n1!==n2){ msg("新しい暗証番号が一致しません"); return; }
+    cfg.salt=b64e(crypto.getRandomValues(new Uint8Array(16)));
+    cfg.hash=await pinHash(n1,cfg.salt);
+    if(!lockSave(cfg)){ msg("保存できませんでした"); return; }
+    lsClose(); msg("暗証番号を変更しました");
+  }else if(lsMode==="unreg"){
+    delete cfg.cred;
+    if(!lockSave(cfg)){ msg("保存できませんでした"); return; }
+    lsClose(); lsRefresh(); msg("Face ID の登録を解除しました");
+  }else if(lsMode==="reg"){
+    try{ cfg.cred=await bioRegister(); }
+    catch(e){ msg("Face ID を登録できませんでした"); return; }
+    if(!lockSave(cfg)){ msg("保存できませんでした"); return; }
+    lsClose(); lsRefresh(); msg("Face ID を登録しました");
+  }
+}
+/* 5分以上バックグラウンドにいたら再ロック */
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){ hiddenAt=Date.now(); return; }
+  if(!locked && hiddenAt && Date.now()-hiddenAt>=5*60*1000) showLockScreen();
+  hiddenAt=0;
+});
+showLockScreen();
 </script>
 </body>
 </html>
